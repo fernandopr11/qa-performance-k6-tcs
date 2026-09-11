@@ -1,82 +1,40 @@
-CONCLUSIONES - PRUEBA DE CARGA DEL SERVICIO DE LOGIN (FakeStoreAPI)
-====================================================================
+Conclusiones - Prueba de carga del login de FakeStoreAPI
+===========================================================
 
-1. RESULTADO GENERAL
----------------------
-La prueba cumplio con los tres criterios de aceptacion solicitados:
-  - Throughput: se alcanzaron ~24.9 TPS (requisito: minimo 20 TPS).
-  - Tiempo de respuesta: p(95) = 413 ms, maximo observado = 675 ms
-    (requisito: maximo 1.5 s / 1500 ms).
-  - Tasa de error: 0.00% sobre 3000 peticiones (requisito: menor al 3%).
+Resultado
 
-2. DECISION DE DISEÑO: COMO SE INTERPRETO "TIEMPO DE RESPUESTA MAXIMO 1.5s"
------------------------------------------------------------------------
-El umbral (threshold) de k6 se definio sobre el percentil 95
-(http_req_duration p(95) < 1500 ms) en lugar del valor maximo absoluto.
-Esto es una practica estandar en pruebas de carga: un unico pico
-puntual (por ejemplo, por una reconexion TCP o un colect de red) no
-deberia invalidar una prueba de miles de peticiones si el
-comportamiento general es consistente. Adicionalmente, se agrego un
-"check" por peticion que si evalua el valor exacto de 1.5s, para tener
-visibilidad de cualquier peticion individual que lo exceda sin que
-haga fallar la ejecucion completa por un evento aislado.
-En la ultima ejecucion, ninguna peticion individual supero los 1.5s
-(maximo observado: 675 ms), por lo que ambas interpretaciones (p95 y
-maximo absoluto) se cumplen igualmente.
+La prueba cumple con los tres criterios pedidos en el ejercicio. Se
+sostuvieron 25 peticiones por segundo durante 2 minutos (3000
+peticiones en total) contra /auth/login, por encima del minimo de 20
+TPS exigido. La tasa de error termino en 0%, y el tiempo de respuesta
+se mantuvo bajo en todo momento: el promedio ronda los 335 ms, el p95
+esta en 413 ms y el pico mas alto registrado fue de 675 ms, muy por
+debajo del limite de 1.5 segundos.
 
-3. HALLAZGO DURANTE EL DESARROLLO: FILA VACIA EN EL CSV
----------------------------------------------------------
-Durante las primeras ejecuciones se detecto una tasa de error de
-~15% (muy por encima del 3% permitido). El diagnostico (aislando
-variables: prueba con una sola credencial fija, prueba de las 5
-credenciales una por una via curl) descarto que el servicio o las
-credenciales fueran la causa. La causa raiz fue que el archivo CSV
-termina con un salto de linea final, y la libreria de parseo
-(papaparse) generaba una fila adicional vacia: {"user": ""} sin la
-propiedad "passwd" (por eso el campo password del login llegaba
-inexistente, no vacio, en el JSON enviado al backend). Al ser tomada
-aleatoriamente, esa fila disparaba un login con body {"username":""}
-(sin password) y por ende una respuesta de error. Se verifico el
-parseo exacto ejecutando papaparse.parse() dentro del contenedor de
-k6, tanto sin como con la opcion de correccion, confirmando 6 filas
-en el primer caso (5 validas + 1 fantasma) y 5 filas en el segundo.
-La proporcion de fallos observada (~15.3%) coincidia con la
-probabilidad de seleccionar esa fila vacia entre 6 filas resultantes
-(1/6 = 16.7%), confirmando la hipotesis.
-Solucion aplicada: se agrego la opcion `skipEmptyLines: true` al
-parseo de papaparse. Tras el fix, la tasa de error bajo a 0.00%.
-Este hallazgo se documenta porque es representativo de un tipo de
-error comun en pruebas data-driven: el problema no estaba en el
-sistema bajo prueba, sino en la carga de datos de la propia prueba, y
-sin un diagnostico aislado se hubiera podido reportar erroneamente
-como una falla de capacidad del servicio de login.
+Sobre el umbral de 1.5 segundos, decidi evaluarlo con el percentil 95
+en vez del valor maximo absoluto, que es la practica habitual en este
+tipo de pruebas: un pico aislado por un tema de red no deberia tumbar
+una prueba de miles de peticiones si el comportamiento general es
+bueno. Aun asi deje un check adicional que compara cada peticion
+individual contra 1.5s, para no perder visibilidad de casos puntuales.
+En esta corrida no hizo falta apelar a esa distincion porque ni
+siquiera el maximo absoluto se acerco al limite.
 
-4. OBSERVACIONES SOBRE EL SERVICIO BAJO PRUEBA
--------------------------------------------------
-- FakeStoreAPI es un servicio publico de demostracion (no un ambiente
-  dedicado de performance testing), por lo que sus tiempos de
-  respuesta y disponibilidad pueden variar segun la carga externa que
-  reciba de otros usuarios en el momento de la ejecucion.
-- Con 25 TPS sostenidos durante 2 minutos, el servicio respondio de
-  forma estable y sin degradacion visible (p50 ~335ms, p95 ~413ms,
-  sin errores), lo que sugiere que tiene margen sobre el umbral minimo
-  de 20 TPS solicitado en el ejercicio.
-- No se identificaron codigos 429 (rate limiting) ni 5xx durante la
-  ejecucion, lo cual indica que, al menos en esta ventana de prueba,
-  el servicio no aplico ningun limite de tasa perceptible a este nivel
-  de carga.
+Sobre el servicio
 
-5. RECOMENDACIONES
----------------------
-- Para un ambiente productivo real, se recomendaria repetir la prueba
-  en distintos horarios y con una duracion mayor (10-15 minutos) para
-  descartar variabilidad por carga externa y detectar posibles
-  problemas de fuga de memoria o degradacion progresiva.
-- Se recomienda versionar y revisar siempre los archivos de datos de
-  prueba (CSV/JSON) usados en pruebas data-driven, ya que errores de
-  formato en los datos (como filas vacias) pueden generar falsos
-  positivos de fallo del sistema bajo prueba.
-- Complementar esta prueba de carga con una prueba de estres
-  (aumentando gradualmente el TPS hasta encontrar el punto de quiebre)
-  para conocer la capacidad maxima real del servicio, no solo si
-  cumple el minimo solicitado.
+FakeStoreAPI es una API publica de demo, no un ambiente pensado para
+pruebas de carga, asi que sus tiempos pueden variar segun cuanto
+trafico este recibiendo de otros usuarios en el momento. Dicho esto,
+con la carga solicitada respondio de forma estable, sin codigos 429 ni
+5xx en toda la ejecucion, lo que sugiere que tiene margen de sobra
+sobre el minimo de 20 TPS pedido.
+
+Recomendaciones
+
+Para un caso real valdria la pena correr la prueba en distintos
+horarios y extender la duracion a 10-15 minutos, para descartar que la
+variabilidad externa este maquillando algun problema de degradacion
+progresiva. Tambien tendria sentido complementar esta prueba de carga
+con una de estres, subiendo el TPS de forma gradual hasta encontrar el
+punto de quiebre real del servicio, en vez de quedarnos solo con la
+validacion del minimo pedido.
