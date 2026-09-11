@@ -32,12 +32,17 @@ variables: prueba con una sola credencial fija, prueba de las 5
 credenciales una por una via curl) descarto que el servicio o las
 credenciales fueran la causa. La causa raiz fue que el archivo CSV
 termina con un salto de linea final, y la libreria de parseo
-(papaparse) generaba una fila adicional vacia (usuario/password
-"undefined"), la cual, al ser tomada aleatoriamente, disparaba un
-login sin body valido y por ende una respuesta de error. La
-proporcion de fallos observada (~15.3%) coincidia con la probabilidad
-de seleccionar esa fila vacia entre 6 filas resultantes (1/6 = 16.7%),
-confirmando la hipotesis.
+(papaparse) generaba una fila adicional vacia: {"user": ""} sin la
+propiedad "passwd" (por eso el campo password del login llegaba
+inexistente, no vacio, en el JSON enviado al backend). Al ser tomada
+aleatoriamente, esa fila disparaba un login con body {"username":""}
+(sin password) y por ende una respuesta de error. Se verifico el
+parseo exacto ejecutando papaparse.parse() dentro del contenedor de
+k6, tanto sin como con la opcion de correccion, confirmando 6 filas
+en el primer caso (5 validas + 1 fantasma) y 5 filas en el segundo.
+La proporcion de fallos observada (~15.3%) coincidia con la
+probabilidad de seleccionar esa fila vacia entre 6 filas resultantes
+(1/6 = 16.7%), confirmando la hipotesis.
 Solucion aplicada: se agrego la opcion `skipEmptyLines: true` al
 parseo de papaparse. Tras el fix, la tasa de error bajo a 0.00%.
 Este hallazgo se documenta porque es representativo de un tipo de
